@@ -1,55 +1,54 @@
 #include <Wire.h>
-
-#define check_sec 60 
+#include "image.cpp"
+#define check_sec 60 //HOW MANY SECONDS BEFORE NEXT cycleBatt()
 #define charge_thresh 14
 #define max_in 15
 #define dc_thresh 5
 
-// A0 A2 A4 A6   true/HIGH [0]
+// A0 A2 A4 A6   PIN true/HIGH [coil is off]
 // 2  3  4  5
-// A1 A3 A5 A7   false/LOW [1]
+// A1 A3 A5 A7   PIN false/LOW [coil is on]
 
 //Digital 2,3,4,5 for switching, 10-11 for display
 //A0-A7 battery 
 //TwoWire (maybe sda11, scl12) for oled
 //digital 6 for button
-//                    lower|higher
-uint16_t charge[4][2] = {{0,0},
-                         {0,0},
-                         {0,0},
-                         {0,0}};
+
+//         PIN LOW, COIL ON|PIN HIGH, COIL OFF
+uint16_t charge[4][2] = {{0,0},  // A0,A1
+                         {0,0},  // A2,A3
+                         {0,0},  // A4,A5
+                         {0,0}}; // A6,A7
+                         
 bool state[4] = {false, false, false, false};
 //Adafruit_SSD1306 display(128, 64, &Wire, -1);
 
 void setup(){
     Serial.begin(9600);
-    pinMode(13, OUTPUT);
+    pinMode(LED_BUILTIN, OUTPUT);
     pinMode(6, INPUT_PULLUP);
-    for(int pin = 2; pin <= 5; pin++)
+    for(uint8_t pin = 2; pin <= 5; pin++)
         pinMode(pin, OUTPUT);
-    for(int i = 0; i < 4; i++)
-        digitalWrite(i+2, state[i]);
 
+    *digitalPinToPCMSK(6) |= bit (digitalPinToPCMSKbit(6));
+    PCIFR  |= bit (digitalPinToPCICRbit(6));
+    PCICR  |= bit (digitalPinToPCICRbit(6));
+    
     //display setup
     //Wire.begin(11, 12);//needs more research, but TwoWire should suppoert software pins
     //display.begin(SSD1306_SWITCHCAPVCC, 0x3D);// initialize with the I2C addr 0x3C (for the 128x32)
     //display.clearDisplay();
 
+    //DRAW STARTUP IMAGE
+    cycleBatt();
+    delay(1000); //for people to see it
 
+    //dispVoltages();
 }
 
-double lastCheck = millis();
-double lastUpdate = millis();
 void loop(){
-    //every 10 seconds switch, check/switch, switch and charge update
-    //flash # of charged
-    if(digitalRead(6) == LOW || millis() - lastCheck >= check_sec*1000UL){
-        lastCheck = millis();
-        cycleBatt();
-    }
-
-    //debug
-    if(millis() - lastUpdate >= 1000){
+    for(int i = 0; i < check_sec; i++){
+        delay(1000);
         Serial.println();
         for(int i = 0; i < 4; i++){
             Serial.print(state[i]);
@@ -63,35 +62,40 @@ void loop(){
             Serial.print(", ");
         }
         Serial.println();
-
-        //dispVoltages();
     }
+    
+    //every minute switch, check/switch, switch and charge update
+    //flash # of charged
+    cycleBatt();
+    //dispVoltages();
+}
 
+ISR(PCINT2_vect){
+    cycleBatt();
 }
 
 void cycleBatt(){
-        updateCharge();
+    noInterrupts();
+    updateCharge();
 
-        //update charge array and swap battery if charged
-        for(int i = 0; i < 4; i++){
-            if(charge[i][0] <= dc_thresh && 
-               charge[i][1] <=dc_thresh)//if both disconnected default idx#0
-                state[i] = false;
-            else if(charge[i][0]/1024.f*max_in >= charge_thresh && 
-                    charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
-                state[i] = false;//idx#1
-            else if(charge[i][1]/1024.f*max_in >= charge_thresh && 
-                    charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
-                state[i] = true;//idx#0
-            else if(charge[i][0] >= charge[i][1] && 
-                    charge[i][0]/1024.f*max_in < charge_thresh) //if idx#0 batt highest+not charged
-                state[i] = true;//idx#0
-            else 
-                state[i] = false;//idx#1
-        }
+    //update charge array and swap battery if charged
+    for(int i = 0; i < 4; i++){
+        if(charge[i][0] <= dc_thresh && charge[i][1] <= dc_thresh)//if both disconnected turn coil off to save power/wear on coil idx#0
+            state[i] = true;
+        else if(charge[i][0]/1024.f*max_in >= charge_thresh && charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
+            state[i] = false;//idx#1
+        else if(charge[i][1]/1024.f*max_in >= charge_thresh && charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
+            state[i] = true;//idx#0
+        else if(charge[i][0] >= charge[i][1] && charge[i][0]/1024.f*max_in < charge_thresh) //if idx#0 batt highest+not charged
+            state[i] = true;//idx#0
+        else 
+            state[i] = false;//idx#1
 
-        updatePowered();
-        blinkCharged();
+    }
+
+    updatePowered();
+    blinkCharged();
+    interrupts();
 }
 
 void updateCharge(){
@@ -101,12 +105,13 @@ void updateCharge(){
     updatePowered();
     
     //updateCharges
-    for(int i = 0; i < 4; i++){
-        if(!state[i])//check opposites hopefully
+    for(uint8_t i = 0; i < 4; i++)
+        charge[i][(uint8_t)(state)] = analogRead(i*2+state);
+        //reduced to one line
+        /*if(!state[i])//check opposites hopefully
             charge[i][0] = analogRead(i*2);
         else
-            charge[i][1] = analogRead(i*2+1);
-    }
+            charge[i][1] = analogRead(i*2+1);*/
     
     //flip
     for(int i = 0; i < 4; i++)
@@ -114,12 +119,8 @@ void updateCharge(){
     updatePowered();
 
     //updateCharges
-    for(int i = 0; i < 4; i++){
-        if(!state[i])//check opposites hopefully
-            charge[i][0] = analogRead(i*2);
-        else
-            charge[i][1] = analogRead(i*2+1);
-    }
+    for(uint8_t i = 0; i < 4; i++)
+        charge[i][(uint8_t)(state)] = analogRead(i*2+state);
 }
 
 void updatePowered(){
@@ -130,23 +131,23 @@ void updatePowered(){
 
 void blinkCharged(){
     //blink number of charged batteries
-    uint8_t tot = 0, max = 8;
-    for(int i = 0; i < 4; i++)
-        for(int j = 0; j < 2; j++){
+    uint8_t tot = 0, maximum = 8; //max can't be a variable name
+    for(uint8_t i = 0; i < 4; i++)
+        for(uint8_t j = 0; j < 2; j++){
             if(charge[i][j]/1024.f*max_in >= charge_thresh){
                 tot++;
-                digitalWrite(13, HIGH);
+                digitalWrite(LED_BUILTIN, HIGH);
                 delay(100);
-                digitalWrite(13, LOW);
+                digitalWrite(LED_BUILTIN, LOW);
                 delay(400);
             }else if(charge[i][j] < dc_thresh)//dont count disconnected
-                max--;
+                maximum--;
         }
     //solid if all done
-    if(tot >= max)
-        digitalWrite(13, HIGH);
+    if(tot >= maximum)
+        digitalWrite(LED_BUILTIN, HIGH);
     else
-        digitalWrite(13, LOW);
+        digitalWrite(LED_BUILTIN, LOW);
 }
 
 // void dispVoltages(){
