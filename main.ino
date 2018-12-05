@@ -1,10 +1,10 @@
 #include <Wire.h>
 
-#define check_sec 60 
-#define charge_thresh 14
-#define max_in 15
-#define dc_thresh 5
-
+#define check_sec 200 
+#define charge_thresh 0.9
+#define max_in 1000.f
+#define dc_thresh 15
+//may be that tru/false swapped
 // A0 A2 A4 A6   true/HIGH [0]
 // 2  3  4  5
 // A1 A3 A5 A7   false/LOW [1]
@@ -46,10 +46,7 @@ void loop(){
     if(digitalRead(6) == LOW || millis() - lastCheck >= check_sec*1000UL){
         lastCheck = millis();
         cycleBatt();
-    }
 
-    //debug
-    if(millis() - lastUpdate >= 1000){
         Serial.println();
         for(int i = 0; i < 4; i++){
             Serial.print(state[i]);
@@ -63,7 +60,10 @@ void loop(){
             Serial.print(", ");
         }
         Serial.println();
+    }
 
+    //debug
+    if(millis() - lastUpdate >= 5000){
         //dispVoltages();
     }
 
@@ -75,16 +75,16 @@ void cycleBatt(){
         //update charge array and swap battery if charged
         for(int i = 0; i < 4; i++){
             if(charge[i][0] <= dc_thresh && 
-               charge[i][1] <=dc_thresh)//if both disconnected default idx#0
-                state[i] = false;
-            else if(charge[i][0]/1024.f*max_in >= charge_thresh && 
+               charge[i][1] <= dc_thresh)//if both disconnected default idx#1
+                state[i] = true;
+            else if(charge[i][0]/max_in >= charge_thresh && 
                     charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
                 state[i] = false;//idx#1
-            else if(charge[i][1]/1024.f*max_in >= charge_thresh && 
+            else if(charge[i][1]/max_in >= charge_thresh && 
                     charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
                 state[i] = true;//idx#0
             else if(charge[i][0] >= charge[i][1] && 
-                    charge[i][0]/1024.f*max_in < charge_thresh) //if idx#0 batt highest+not charged
+                    charge[i][0]/max_in < charge_thresh) //if idx#0 batt highest+not charged
                 state[i] = true;//idx#0
             else 
                 state[i] = false;//idx#1
@@ -125,7 +125,7 @@ void updateCharge(){
 void updatePowered(){
     for(int i = 0; i < 4; i++)
         digitalWrite(i+2, state[i]);
-    delay(50);//allow relays to swap
+    delay(100);//allow relays to swap
 }
 
 void blinkCharged(){
@@ -133,7 +133,7 @@ void blinkCharged(){
     uint8_t tot = 0, max = 8;
     for(int i = 0; i < 4; i++)
         for(int j = 0; j < 2; j++){
-            if(charge[i][j]/1024.f*max_in >= charge_thresh){
+            if(charge[i][j]/max_in >= charge_thresh){
                 tot++;
                 digitalWrite(13, HIGH);
                 delay(100);
