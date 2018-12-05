@@ -1,23 +1,14 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 
-<<<<<<< HEAD
 #define check_sec 200 
 #define charge_thresh 0.9
 #define max_in 1000.f
 #define dc_thresh 15
-//may be that tru/false swapped
-// A0 A2 A4 A6   true/HIGH [0]
-=======
-#define check_sec 60 //HOW MANY SECONDS BEFORE NEXT cycleBatt()
-#define charge_thresh 14
-#define max_in 15
-#define dc_thresh 5
 
-// A0 A2 A4 A6   PIN true/HIGH [coil is off]
->>>>>>> 516c596aa5a4946a59d12a08f62fe5be8a1f8fb1
+// A0 A2 A4 A6   true/HIGH [0] coil off
 // 2  3  4  5
-// A1 A3 A5 A7   PIN false/LOW [coil is on]
+// A1 A3 A5 A7   PIN false/LOW [1] coil is on
 
 //Digital 2,3,4,5 for switching, 10-11 for display
 //A0-A7 battery 
@@ -140,16 +131,7 @@ void setup(){
 }
 
 void loop(){
-<<<<<<< HEAD
-    //every 10 seconds switch, check/switch, switch and charge update
-    //flash # of charged
-    if(digitalRead(6) == LOW || millis() - lastCheck >= check_sec*1000UL){
-        lastCheck = millis();
-        cycleBatt();
-
-=======
     for(int i = 0; i < check_sec; i++){
->>>>>>> 516c596aa5a4946a59d12a08f62fe5be8a1f8fb1
         Serial.println();
         for(int i = 0; i < 4; i++){
             Serial.print(state[i]);
@@ -163,17 +145,11 @@ void loop(){
             Serial.print(", ");
         }
         Serial.println();
-<<<<<<< HEAD
-    }
-
-    //debug
-    if(millis() - lastUpdate >= 5000){
-        //dispVoltages();
-=======
+        
         dispVoltages();
         delay(1000);
         timesincerefresh++;
->>>>>>> 516c596aa5a4946a59d12a08f62fe5be8a1f8fb1
+
     }
     
     //every minute switch, check/switch, switch and charge update
@@ -190,7 +166,6 @@ void cycleBatt(){
     noInterrupts();
     updateCharge();
 
-<<<<<<< HEAD
         //update charge array and swap battery if charged
         for(int i = 0; i < 4; i++){
             if(charge[i][0] <= dc_thresh && 
@@ -208,20 +183,6 @@ void cycleBatt(){
             else 
                 state[i] = false;//idx#1
         }
-=======
-    //update charge array and swap battery if charged
-    for(int i = 0; i < 4; i++){
-        if(charge[i][0] <= dc_thresh && charge[i][1] <= dc_thresh)//if both disconnected turn coil off to save power/wear on coil idx#0
-            state[i] = true;
-        else if(charge[i][0]/1024.f*max_in >= charge_thresh && charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
-            state[i] = false;//idx#1
-        else if(charge[i][1]/1024.f*max_in >= charge_thresh && charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
-            state[i] = true;//idx#0
-        else if(charge[i][0] >= charge[i][1] && charge[i][0]/1024.f*max_in < charge_thresh) //if idx#0 batt highest+not charged
-            state[i] = true;//idx#0
-        else 
-            state[i] = false;//idx#1
->>>>>>> 516c596aa5a4946a59d12a08f62fe5be8a1f8fb1
 
     }
 
@@ -263,17 +224,10 @@ void updatePowered(){
 
 void blinkCharged(){
     //blink number of charged batteries
-<<<<<<< HEAD
-    uint8_t tot = 0, max = 8;
+    uint8_t tot = 0, maximum = 8;
     for(int i = 0; i < 4; i++)
         for(int j = 0; j < 2; j++){
             if(charge[i][j]/max_in >= charge_thresh){
-=======
-    uint8_t tot = 0, maximum = 8; //max can't be a variable name
-    for(uint8_t i = 0; i < 4; i++)
-        for(uint8_t j = 0; j < 2; j++){
-            if(charge[i][j]/1024.f*max_in >= charge_thresh){
->>>>>>> 516c596aa5a4946a59d12a08f62fe5be8a1f8fb1
                 tot++;
                 digitalWrite(LED_BUILTIN, HIGH);
                 delay(100);
