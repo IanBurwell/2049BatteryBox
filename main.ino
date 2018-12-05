@@ -2,9 +2,8 @@
 #include <U8g2lib.h>
 
 #define check_sec 200 
-#define charge_thresh 0.9
-#define max_in 1000.f
-#define dc_thresh 15
+#define charge_thresh 14
+#define dc_thresh 0.1
 
 // A0 A2 A4 A6   true/HIGH [0] coil off
 // 2  3  4  5
@@ -15,11 +14,11 @@
 //TwoWire (maybe sda11, scl12) for oled
 //digital 6 for button
 
-//         PIN LOW, COIL ON|PIN HIGH, COIL OFF
-uint16_t charge[4][2] = {{0,0},  // A0,A1
-                         {0,0},  // A2,A3
-                         {0,0},  // A4,A5
-                         {0,0}}; // A6,A7
+//      PIN LOW, COIL ON|PIN HIGH, COIL OFF
+float charge[4][2] = {{0,0},  // A0,A1
+                      {0,0},  // A2,A3
+                      {0,0},  // A4,A5
+                      {0,0}}; // A6,A7
                          
 bool state[4] = {false, false, false, false};
 
@@ -119,6 +118,7 @@ void setup(){
     u8g2.setFontMode(false);
     u8g2.setFontDirection(0);
     u8g2.setFontRefHeightExtendedText();
+    u8g2.setDrawColor(0);
     
     //DRAW STARTUP IMAGE
     u8g2.clearBuffer();
@@ -168,17 +168,13 @@ void cycleBatt(){
 
         //update charge array and swap battery if charged
         for(int i = 0; i < 4; i++){
-            if(charge[i][0] <= dc_thresh && 
-               charge[i][1] <= dc_thresh)//if both disconnected default idx#1
+            if(charge[i][0] <= dc_thresh && charge[i][1] <= dc_thresh)//if both disconnected default idx#1
                 state[i] = true;
-            else if(charge[i][0]/max_in >= charge_thresh && 
-                    charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
+            else if(charge[i][0] >= charge_thresh && charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
                 state[i] = false;//idx#1
-            else if(charge[i][1]/max_in >= charge_thresh && 
-                    charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
+            else if(charge[i][1] >= charge_thresh && charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
                 state[i] = true;//idx#0
-            else if(charge[i][0] >= charge[i][1] && 
-                    charge[i][0]/max_in < charge_thresh) //if idx#0 batt highest+not charged
+            else if(charge[i][0] >= charge[i][1] && charge[i][0] < charge_thresh) //if idx#0 batt highest+not charged
                 state[i] = true;//idx#0
             else 
                 state[i] = false;//idx#1
@@ -192,28 +188,14 @@ void cycleBatt(){
 }
 
 void updateCharge(){
-    //flip
-    for(int i = 0; i < 4; i++)
-        state[i] = !state[i];
-    updatePowered();
-    
-    //updateCharges
-    for(uint8_t i = 0; i < 4; i++)
-        charge[i][(uint8_t)(state)] = analogRead(i*2+state);
-        //reduced to one line
-        /*if(!state[i])//check opposites hopefully
-            charge[i][0] = analogRead(i*2);
-        else
-            charge[i][1] = analogRead(i*2+1);*/
-    
-    //flip
-    for(int i = 0; i < 4; i++)
-        state[i] = !state[i];
-    updatePowered();
-
-    //updateCharges
-    for(uint8_t i = 0; i < 4; i++)
-        charge[i][(uint8_t)(state)] = analogRead(i*2+state);
+    for(uint8_t j = 0; j < 2; j++){
+        //updateCharges and flip batteries
+        for(uint8_t i = 0; i < 4; i++){
+            charge[i][(uint8_t)(state)] = analogRead(i*2+state)/1024.f*21.5;
+            state[i] = !state[i];
+        }
+        updatePowered();
+    }
 }
 
 void updatePowered(){
@@ -227,7 +209,7 @@ void blinkCharged(){
     uint8_t tot = 0, maximum = 8;
     for(int i = 0; i < 4; i++)
         for(int j = 0; j < 2; j++){
-            if(charge[i][j]/max_in >= charge_thresh){
+            if(charge[i][j] >= charge_thresh){
                 tot++;
                 digitalWrite(LED_BUILTIN, HIGH);
                 delay(100);
@@ -243,12 +225,13 @@ void blinkCharged(){
         digitalWrite(LED_BUILTIN, LOW);
 }
 
- void dispVoltages(){    
+ void dispVoltages(){  
+    noInterrupts();  
     u8g2.clearBuffer();
     u8g2.setDrawColor(1);
 
-    u8g2.drawFrame(0, 16, 64, 48);
-    u8g2.drawFrame(64, 16, 64, 48);
+    u8g2.drawFrame(0, 16, 128, 24);
+    u8g2.drawFrame(0, 40, 128, 24);
     
     uint8_t maxi = 0;
     uint8_t maxj = 0;
@@ -261,13 +244,13 @@ void blinkCharged(){
             }
 
             u8g2.setCursor(i*32+6, j*24+20);
-            u8g2.print((char)(65+i*2+j));
+            u8g2.print((char)(65+i+j*4));
             u8g2.print(":");
             u8g2.setCursor(i*32+6, j*24+28);
             if(charge[i][j] < dc_thresh) {
                 u8g2.print("NONE");
             } else {
-                u8g2.print(charge[i][j]/1024.f*max_in, 1);
+                u8g2.print(charge[i][j], 1);
                 u8g2.print("V");
             }
         }
@@ -275,17 +258,15 @@ void blinkCharged(){
 
     u8g2.setCursor(0, 0);
     u8g2.print("Most Charged Battery: ");
-    u8g2.print((char)(65+maxi*2+maxj));
+    u8g2.print((char)(65+maxi+maxj*4));
     u8g2.setCursor(0, 8);
     u8g2.print("Refreshed ");
     u8g2.print(timesincerefresh);
     u8g2.print(" sec ago");     
 
-    if(maxi%2 == 0)
-      u8g2.drawFrame(maxi*32, maxj*24+16, 34, 24);
-    else
-      u8g2.drawFrame(maxi*32, maxj*24+16, 32, 24);
+    u8g2.drawFrame(maxi*32, maxj*24+16, 34, 24);
     
     u8g2.sendBuffer();
+    interrupts();
 }
 
