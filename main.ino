@@ -1,12 +1,11 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 
-
-#define check_sec 200 
-#define charge_thresh 14
-#define max_thresh 19
-#define min_thresh 11.5
-#define dc_thresh 0.5
+#define check_sec 200         //How many seconds to wait before next refresh
+#define charge_thresh 13.8    //Voltage of charged battery
+#define max_thresh 19         //Voltage of charger (no battery connected
+#define min_thresh 11.5       //Voltage of completely discharged battery
+#define dc_thresh 0.5         //Voltage of unconnected / floating pin
 
 // A0 A2 A4 A6   true/HIGH [0] coil off
 // 2  3  4  5
@@ -139,7 +138,7 @@ void updateCharge(){
     for(uint8_t j = 0; j < 2; j++){
         //updateCharges and flip batteries
         for(uint8_t i = 0; i < 4; i++){
-            charge[i][(uint8_t)(state[i])] = analogRead(i*2+state[i])*21.5/1024.f;
+            charge[i][(uint8_t)(state[i])] = analogRead(i*2+state[i])*21.5/1024.f*coefficients[i][(uint8_t)(state[i])];
             state[i] = !state[i];
         }
         updatePowered();
