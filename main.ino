@@ -1,9 +1,12 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 
+
 #define check_sec 200 
 #define charge_thresh 14
-#define dc_thresh 0.1
+#define max_thresh 19
+#define min_thresh 11.5
+#define dc_thresh 0.5
 
 // A0 A2 A4 A6   true/HIGH [0] coil off
 // 2  3  4  5
@@ -13,12 +16,16 @@
 //A0-A7 battery 
 //TwoWire (maybe sda11, scl12) for oled
 //digital 6 for button
+//        PIN LOW, COIL ON|PIN HIGH, COIL OFF
+float charge[4][2] = {{0.0,0.0},  // A0,A1
+                      {0.0,0.0},  // A2,A3
+                      {0.0,0.0},  // A4,A5
+                      {0.0,0.0}}; // A6,A7
 
-//      PIN LOW, COIL ON|PIN HIGH, COIL OFF
-float charge[4][2] = {{0,0},  // A0,A1
-                      {0,0},  // A2,A3
-                      {0,0},  // A4,A5
-                      {0,0}}; // A6,A7
+float coefficients[4][2] = {{1.0,1.0},  // A0,A1 TO IMPROVE ACCURACY OF VOLTAGE READINGS
+                            {1.0,1.0},  // A2,A3
+                            {1.0,1.0},  // A4,A5
+                            {1.0,1.0}}; // A6,A7
                          
 bool state[4] = {false, false, false, false};
 
@@ -95,91 +102,32 @@ static const unsigned char doge_bits[] U8X8_PROGMEM = { //More like PROGMEME ami
   0xF0, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
 };
 
-
-void setup(){
-    Serial.begin(9600);
-    pinMode(LED_BUILTIN, OUTPUT);
-    pinMode(6, INPUT_PULLUP);
-    for(uint8_t pin = 2; pin <= 5; pin++)
-        pinMode(pin, OUTPUT);
-
-    *digitalPinToPCMSK(6) |= bit (digitalPinToPCMSKbit(6));
-    PCIFR  |= bit (digitalPinToPCICRbit(6));
-    PCICR  |= bit (digitalPinToPCICRbit(6));
-    
-    //display setup
-    u8g2.begin();
-
-    cycleBatt();
-
-    u8g2.setBitmapMode(false /* solid */);
-    u8g2.setFont(u8g2_font_5x8_tf);
-    u8g2.setFontPosTop();
-    u8g2.setFontMode(false);
-    u8g2.setFontDirection(0);
-    u8g2.setFontRefHeightExtendedText();
-    u8g2.setDrawColor(0);
-    
-    //DRAW STARTUP IMAGE
-    u8g2.clearBuffer();
-    u8g2.drawXBMP(0, 16, 128, 48, doge_bits);
-    u8g2.sendBuffer();
-
-    delay(500); //so people can see it
-    
-    dispVoltages();
-}
-
-void loop(){
-    for(int i = 0; i < check_sec; i++){
-        Serial.println();
-        for(int i = 0; i < 4; i++){
-            Serial.print(state[i]);
-            Serial.print(", ");
-        }
-        Serial.println();
-        for(int i = 0; i < 4; i++){
-            Serial.print(charge[i][0]);
-            Serial.print("|");
-            Serial.print(charge[i][1]);
-            Serial.print(", ");
-        }
-        Serial.println();
-        
-        dispVoltages();
-        delay(1000);
-        timesincerefresh++;
-
-    }
-    
-    //every minute switch, check/switch, switch and charge update
-    //flash # of charged
-    cycleBatt();
-    timesincerefresh = 0;
-}
+#define lightning_width 6
+#define lightning_height 9
+static const unsigned char lightning_bits[] U8X8_PROGMEM = {
+  0x18, 0x0C, 0x06, 0x03, 0x3F, 0x30, 0x18, 0x0C, 0x06, };
 
 ISR(PCINT2_vect){
     cycleBatt();
+    timesincerefresh = 0;
 }
 
 void cycleBatt(){
     noInterrupts();
     updateCharge();
 
-        //update charge array and swap battery if charged
-        for(int i = 0; i < 4; i++){
-            if(charge[i][0] <= dc_thresh && charge[i][1] <= dc_thresh)//if both disconnected default idx#1
-                state[i] = true;
-            else if(charge[i][0] >= charge_thresh && charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
-                state[i] = false;//idx#1
-            else if(charge[i][1] >= charge_thresh && charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
-                state[i] = true;//idx#0
-            else if(charge[i][0] >= charge[i][1] && charge[i][0] < charge_thresh) //if idx#0 batt highest+not charged
-                state[i] = true;//idx#0
-            else 
-                state[i] = false;//idx#1
-        }
-
+    //update charge array and swap battery if charged
+    for(int i = 0; i < 4; i++){
+        if(charge[i][0] <= dc_thresh && charge[i][1] <= dc_thresh)//if both disconnected default idx#1
+            state[i] = true;
+        else if(charge[i][0] >= charge_thresh && charge[i][1] <= dc_thresh)//idx#0 charged, swap to unplugged
+            state[i] = false;//idx#1
+        else if(charge[i][1] >= charge_thresh && charge[i][0] <= dc_thresh)//idx#1 charged, swap to unplugged
+            state[i] = true;//idx#0
+        else if(charge[i][0] >= charge[i][1] && charge[i][0] < charge_thresh) //if idx#0 batt highest+not charged
+            state[i] = true;//idx#0
+        else 
+            state[i] = false;//idx#1
     }
 
     updatePowered();
@@ -191,11 +139,13 @@ void updateCharge(){
     for(uint8_t j = 0; j < 2; j++){
         //updateCharges and flip batteries
         for(uint8_t i = 0; i < 4; i++){
-            charge[i][(uint8_t)(state)] = analogRead(i*2+state)/1024.f*21.5;
+            charge[i][(uint8_t)(state[i])] = analogRead(i*2+state[i])*21.5/1024.f;
             state[i] = !state[i];
         }
         updatePowered();
     }
+
+    printVoltages();
 }
 
 void updatePowered(){
@@ -215,7 +165,7 @@ void blinkCharged(){
                 delay(100);
                 digitalWrite(LED_BUILTIN, LOW);
                 delay(400);
-            }else if(charge[i][j] < dc_thresh)//dont count disconnected
+            } else if(charge[i][j] < dc_thresh)//dont count disconnected
                 maximum--;
         }
     //solid if all done
@@ -225,48 +175,123 @@ void blinkCharged(){
         digitalWrite(LED_BUILTIN, LOW);
 }
 
- void dispVoltages(){  
+void dispVoltages(){  
     noInterrupts();  
     u8g2.clearBuffer();
-    u8g2.setDrawColor(1);
-
-    u8g2.drawFrame(0, 16, 128, 24);
-    u8g2.drawFrame(0, 40, 128, 24);
-    
-    uint8_t maxi = 0;
-    uint8_t maxj = 0;
+    u8g2.setDrawColor(2);
+    uint8_t x, h;
+    char buf[9];
     for(uint8_t i = 0; i < 4; i++){
         for(uint8_t j = 0; j < 2; j++){
             //charge[i][j] = random(0, 1024);
-            if(charge[i][j] > charge[maxi][maxj]){
-                maxi = i;
-                maxj = j;
-            }
+            if(charge[i][j] >= dc_thresh && charge[i][j] <= max_thresh) {
+                x = (i+j*4)*16;
+                u8g2.setCursor(x+1, 5);
+                u8g2.print((char)(65+i+j*4));
 
-            u8g2.setCursor(i*32+6, j*24+20);
-            u8g2.print((char)(65+i+j*4));
-            u8g2.print(":");
-            u8g2.setCursor(i*32+6, j*24+28);
-            if(charge[i][j] < dc_thresh) {
-                u8g2.print("NONE");
-            } else {
-                u8g2.print(charge[i][j], 1);
-                u8g2.print("V");
+                if(state[i] == j){
+                  u8g2.drawXBMP(x+7, 7, lightning_width, lightning_height, lightning_bits);
+                }
+                
+                u8g2.drawHLine(x+1, 20, 4);
+                u8g2.drawHLine(x+11, 20, 4);
+                u8g2.drawHLine(x+4, 16, 8);
+                u8g2.drawHLine(x+1, 63, 14);
+                u8g2.drawVLine(x+4, 16, 4);
+                u8g2.drawVLine(x+11, 16, 4);
+                u8g2.drawVLine(x+1, 20, 44);
+                u8g2.drawVLine(x+14, 20, 44);
+
+                h = (int)(46.0*(charge[i][j]-min_thresh)/(charge_thresh-min_thresh));
+
+                if(h > 46){
+                  h = 46;
+                }
+                
+                if(h > 42){
+                    u8g2.drawBox(x+2, 21, 12, 42);
+                    h -= 42;
+                    u8g2.drawBox(x+5, 21-h, 6, h);
+                } else {
+                    u8g2.drawBox(x+2, 63-h, 12, h);
+                }
+                
+                u8g2.setCursor(x, 22);
+                u8g2.setFontDirection(1);
+                dtostrf(charge[i][j], 4, 2, buf);
+                strcat(buf, "v");
+                u8g2.drawStr(x+14, 62-strlen(buf)*6, buf);
+                u8g2.setFontDirection(0);
             }
         }
     }
 
-    u8g2.setCursor(0, 0);
-    u8g2.print("Most Charged Battery: ");
-    u8g2.print((char)(65+maxi+maxj*4));
-    u8g2.setCursor(0, 8);
-    u8g2.print("Refreshed ");
-    u8g2.print(timesincerefresh);
-    u8g2.print(" sec ago");     
-
-    u8g2.drawFrame(maxi*32, maxj*24+16, 34, 24);
+    u8g2.drawFrame(0, 0, 127, 5);
+    u8g2.drawBox(1, 1, (int)(timesincerefresh*125.0/check_sec), 3);
     
     u8g2.sendBuffer();
     interrupts();
+}
+
+void printVoltages(){
+    Serial.println();
+    for(int i = 0; i < 4; i++){
+        Serial.print(state[i]);
+        Serial.print(", ");
+    }
+    Serial.println();
+    for(int i = 0; i < 4; i++){
+        Serial.print(charge[i][0]);
+        Serial.print("|");
+        Serial.print(charge[i][1]);
+        Serial.print(", ");
+    }
+    Serial.println();
+}
+
+void setup(){
+    Serial.begin(9600);
+    pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(6, INPUT_PULLUP);
+    for(uint8_t pin = 2; pin <= 5; pin++)
+        pinMode(pin, OUTPUT);
+
+    *digitalPinToPCMSK(6) |= bit (digitalPinToPCMSKbit(6));
+    PCIFR  |= bit (digitalPinToPCICRbit(6));
+    PCICR  |= bit (digitalPinToPCICRbit(6));
+
+    cycleBatt();
+    
+    //display setup
+    u8g2.begin();
+    u8g2.setBitmapMode(false /* solid */);
+    u8g2.setFont(u8g2_font_6x13_tf);
+    u8g2.setFontPosTop();
+    u8g2.setFontMode(1);
+    u8g2.setFontDirection(0);
+    u8g2.setFontRefHeightExtendedText();
+    u8g2.setDrawColor(0);
+    
+    //DRAW STARTUP IMAGE
+    u8g2.clearBuffer();
+    u8g2.drawXBMP(0, 16, doge_width, doge_height, doge_bits);
+    u8g2.sendBuffer();
+
+    delay(1000); //so people can see it
+    
+    dispVoltages();
+}
+
+void loop(){
+    for(int i = 0; i < check_sec; i++){
+        dispVoltages();
+        delay(1000);
+        timesincerefresh++;
+    }
+    
+    //every minute switch, check/switch, switch and charge update
+    //flash # of charged
+    cycleBatt();
+    timesincerefresh = 0;
 }
 
